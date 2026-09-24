@@ -1,3 +1,5 @@
+This tool supports the migration of extra large Scalar projects when the platform's built-in Import/Export tool hits a wall. Developed initially by Jasmine Mulliken Digital Publishing Services for the Digital Piranesi Project, it aims to be reusable for any Scalar book with bulky or extensive relationships (e.g. tags or annotations).
+
 # Migrating The Digital Piranesi Off USC's Scalar Server: A Complete Guide
 
 **Prepared for:** the project owner, to enable running this migration independently of any single collaborator's involvement.
@@ -12,11 +14,11 @@ This was not the first attempt to move The Digital Piranesi off USC's server. Ea
 
 ### What USC tried first, and what Scalar's own developer said about it
 
-USC's team first ran into the built-in Import tool hanging at a "Loading existing relationships" stage — it would succeed on the first several thousand-node batches, then freeze completely. Scalar's developer (Erik) confirmed this wasn't a configuration mistake on USC's end:
+USC's team first ran into the built-in Import tool hanging at a "Loading existing relationships" stage — it would succeed on the first several thousand-node batches, then freeze completely. A Scalar's developer confirmed this wasn't a configuration mistake on USC's end but that:
 
-> "It's possible for a project to get so large that the import tool, which needs to call up every node in order to handle new additions, can't complete its work... I imagine it may be possible to tweak your server and MySQL settings to increase allocated memory and/or other timeouts... but I can't say for sure."
+> "It's possible for a project to get so large that the import tool, which needs to call up every node in order to handle new additions, can't complete its work."
 
-This is the same root cause this project rediscovered independently, months later: **any tool that tries to load a book's entire relationship graph in one pass will fail once the book is large enough — the built-in import tool, the built-in export tool, and the bulk `instancesof` API endpoint are all the same underlying mechanism, and all three hit the same wall.**
+This is the same root cause this project rediscovered independently, a couple years later: **any tool that tries to load a book's entire relationship graph in one pass will fail once the book is large enough — the built-in import tool, the built-in export tool, and the bulk `instancesof` API endpoint are all the same underlying mechanism, and all three hit the same wall.**
 
 ### The earlier attempt to scrape around it — and why it failed differently than expected
 
@@ -26,17 +28,15 @@ api_url = "https://scalar.usc.edu/works/piranesidigitalproject/rdf/instancesof/c
 rdf = read_json(api_url)
 write_json(rdf, path = "sample_rdf.json")
 ```
-The resulting file *looked* valid — Scalar's own Import tool validated it and showed a green light — but import still hung indefinitely with the progress bar never moving. When Scalar's developer inspected the file, the actual bug was subtle and easy to miss:
-
-> "I think the issue is that all of the 'value' and 'type' properties in your data file are arrays instead of strings. I don't believe the API returns data this way — could the arrays have been introduced at some point as the data was scraped?"
+The resulting file *looked* valid — Scalar's own Import tool validated it and showed a green light — but import still hung indefinitely with the progress bar never moving. The actual bug was subtle and easy to miss:
 
 **This is a real pitfall worth remembering if this project is ever redone in a different language:** R's `jsonlite` silently wraps single values in arrays by default unless told not to (`simplifyVector`/`auto_unbox` settings). The tool this project ultimately built avoids this specific trap because it's written in Python, using the standard `json` library, which preserves the API's native `{"value": "...", "type": "literal"}` shape exactly — but it's a lesson worth carrying forward regardless of tooling: **always spot-check that scraped values are scalars, not accidentally-wrapped single-element arrays**, before trusting an import.
 
-### What Scalar's developer said was and wasn't possible, at the time
+### What was and wasn't possible, at the time
 
-In that same correspondence, Scalar's developer stated plainly: *"Unfortunately the ToC will need to be recreated — it's a limitation of the API that it can't export that particular data."* This was true of the `instancesof` bulk endpoint USC was using at the time. **This project found a narrower, more capable path that wasn't part of that guidance: individual node-level queries (`rdf/node/[slug]?res=path&rec=1`) can retrieve path/structure relationships that the bulk endpoint cannot surface at scale.** This is a genuine, hard-won improvement on the state of the art as it stood in earlier correspondence, and it's the foundation of the tool described in Part 2.
+The ToC will need to be recreated — it's a limitation of the API that it can't export that particular data. This is true of the `instancesof` bulk endpoint. **This project found a narrower, more capable path that wasn't part of that guidance: individual node-level queries (`rdf/node/[slug]?res=path&rec=1`) can retrieve path/structure relationships that the bulk endpoint cannot surface at scale.** This is a genuine, hard-won improvement on the state of the art as it stood in earlier correspondence, and it's the foundation of the tool described in Part 2. The top-level ToC will still need to be manually added, but all further relationship are retained.
 
-Two official Scalar guides were correctly identified back then and remain the right references today:
+Two official Scalar guides remain the right references today:
 - Bulk importing via the Transfer tool's JSON import: `https://scalar.usc.edu/works/guide2/bulk-importing-data-from-a-json-file-using-the-transfer-tool?path=advanced-topics`
 - Transferring physical media separately: `https://scalar.usc.edu/works/guide2/transfer-physical-media-too?path=advanced-topics`
 
@@ -54,7 +54,7 @@ Every tool that failed — the built-in export, the built-in import, the `instan
 
 - `rdf/node/[slug]?format=json` — a single node's own data (title, body content, media references).
 - Adding `&res=path&rec=1` — that same node's direct children in the book's structural hierarchy. The `rec=1` parameter is required; omitting it silently returns no relationship data at all, with no error.
-- Adding `&res=annotation&rec=1` — **but only when aimed at a media node's own slug, not the page that displays it.** Annotations (the numbered spatial regions on an image) attach to the media item itself. This was the single hardest-won discovery in the whole project — early attempts aimed this query at the page and got nothing back, for weeks, before testing the underlying media node directly confirmed the fix.
+- Adding `&res=annotation&rec=1` — **but only when aimed at a media node's own slug.** Annotations (the numbered spatial regions on an image) attach to the media item itself. 
 - The book's top-level table of contents is *not* reachable via `path` relationships at all — it's a separate `toc` node, linked from the book root, whose children are listed via `dcterms:references`. Everything one level below that uses `path` relationships as normal.
 
 ### The tool: `scalar_book_export_recreator.ipynb`
